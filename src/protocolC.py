@@ -1,0 +1,239 @@
+import sys
+import time as tm
+import numpy as np
+import ConfigParser
+
+
+def getlist(option, sep=',', chars=None):
+    """Return a list from a ConfigParser option. By default,
+       split on a comma and strip whitespaces."""
+    return [float(chunk.strip(chars)) for chunk in option.split(sep)]
+
+
+class dnf:
+    def __init__(self, configFileName):
+        config = ConfigParser.RawConfigParser()
+        config.read(configFileName)
+
+        self.n = config.getint('Model', 'numNeurons')
+        self.x_inf = config.getfloat('Model', 'x_inf')
+        self.x_sup = config.getfloat('Model', 'x_sup')
+        self.tau1 = config.getfloat('Model', 'tau1')
+        self.tau2 = config.getfloat('Model', 'tau2')
+        self.axonalVelGS = config.getfloat('Model', 'axonalvelocityGS')
+        self.axonalVelSG = config.getfloat('Model', 'axonalvelocitySG')
+        self.axonalVelGG = config.getfloat('Model', 'axonalvelocityGG')
+        self.K = getlist(config.get('Model', 'SynapticStrength'))
+        self.S = getlist(config.get('Model', 'SynapticVariance'))
+
+        self.Wcx = config.getfloat('Model', 'synapticstrengthCx')
+        self.Wstr = config.getfloat('Model', 'synapticstrengthStr')
+
+        self.switch = config.getint('DBS', 'switch')
+        self.Kc = config.getfloat('DBS', 'Kc')
+        self.tau = config.getint('DBS', 'tau')
+
+        self.l = (self.x_sup - self.x_inf)
+        self.dx = self.l/float(self.n)
+        self.mean = self.l/2
+
+        self.norm()
+        self.printParams()
+
+    def printParams(self):
+        print 'Model Parameters'
+        print '----------------'
+        print "Number of neurons: {}".format(self.n)
+        print "Domain Omega: [{}, {}]".format(self.x_inf, self.x_sup)
+        print "Length of domain: {}".format(self.l)
+        print "Synaptic decay times: {} and {}".format(self.tau1, self.tau2)
+        print "Axonal transmission velocity G->S: {}".format(self.axonalVelGS)
+        print "Axonal transmission velocity S->G: {}".format(self.axonalVelSG)
+        print "Axonal transmission velocity G->G: {}".format(self.axonalVelGG)
+        print "Synaptic stregnths: {}, {}, {}".format(self.K[0], self.K[1],
+                                                      self.K[2])
+        print "Synaptic variances: {}, {}, {}".format(self.S[0], self.S[1],
+                                                      self.S[2])
+        print "Cortical synaptic strength: {}".format(self.Wcx)
+        print "Striatal synaptic strength: {}".format(self.Wstr)
+        print 'DBS Parameters'
+        print '--------------'
+        print "DBS Gain (Kc): {}".format(self.Kc)
+        print "DBS control signal time constant: {}".format(self.tau)
+        print "-------------------------------------------------------------"
+
+    def S1(self, x):
+        """ Sigmoid function of population #1 """
+        # return 1.0/(1.0 + np.exp(-x)) - 0.5
+        return 0.3/(1 + np.exp(-4.*x/0.3) * 283./17.)
+
+    def S2(self, x):
+        """ Sigmoid function of population #2 """
+        # return 1.0/(1.0 + np.exp(-x)) - 0.5
+        return 0.4/(1 + np.exp(-4.*x/0.4) * 325./75.)
+
+    def gaussian(self, x, sigma=1.0):
+        ''' Gaussian function '''
+        return (1.0/(np.sqrt(2*np.pi)*sigma))*np.exp(-.5*(x/sigma)**2)
+        # return np.exp(-0.5*(x/sigma)**2)
+
+    def g(self, x, sigma):
+        return np.exp(-.5*(x/sigma)**2)
+
+    def build_distances(self, nodes):
+        """ Computes all the possible distances between units """
+        X, Y = np.meshgrid(np.linspace(self.x_inf, self.x_sup, nodes),
+                           np.linspace(self.x_inf, self.x_sup, nodes))
+        D = abs((X-self.mean) - (Y-self.mean))
+        return D
+
+    def norm(self):
+        """ Computes the norms """
+        N = 5000
+        dx = self.l/float(N)
+        d = self.build_distances(N)
+        norm = np.zeros((len(self.K), ))
+        for i in range(len(self.K)):
+            tmp = (self.K[i] * self.g(d, self.S[i]))**2
+            norm[i] = tmp.sum() * dx * dx
+        print "Norm W22: {}".format(norm[2])
+
+    def build_kernels(self):
+        """ Build the synaptic connectivity matrices """
+        n = self.n
+        # Compute all the possible distances
+        dist = self.build_distances(n)
+
+        # Create a temporary vector containing gaussians
+        g = np.empty((len(self.K), n, n))
+        for j in range(len(self.K)):
+            for i in range(n):
+                # g[j, i] = self.K[j] * self.gaussian(dist[i], self.S[j])
+                g[j, i] = self.K[j] * self.g(dist[i], self.S[j])
+            g[j, n//4:3*n//4] = 0.0
+
+        # GPe to STN connections
+        W12 = np.zeros((n, n))
+        W12[:n//4, 3*n//4:] = g[0, 3*n//4:, 3*n//4:]
+
+        # STN to GPe connections
+        W21 = np.zeros((n, n))
+        W21[3*n//4:, :n//4] = g[1, :n//4, :n//4l]
+
+        # GPe to GPe connections
+        W22 = np.zeros((n, n))
+        W22[3*n//4:, 3*n//4:] = g[2, 3*n//4:, 3*n//4:]
+        np.fill_diagonal(W22, 0.0)
+
+        return W12, W21, W22, dist
+
+    def optogenetics_failure(self, x, percent):
+        idx = np.random.randint(0, x.shape[0], (percent,))
+        x[idx] = 0.0
+
+    def initial_conditions(self, time):
+        """ Set the initial conditions """
+        n = self.n
+
+        self.X1 = np.random.uniform(0.01, 0.01, (time, n))
+        self.X1[:, n//4:] = 0.0
+
+        self.X2 = np.random.uniform(0.01, 0.01, (time, n))
+        self.X2[:, :3*n//4] = 0.0
+
+    def run(self, tf, dt):
+        """ Run a simulation """
+        n = self.n
+        m, k = n//4, 3*n//4
+
+        # Total simulation time
+        simTime = int(tf/dt)
+
+        # Returns the three synaptic connections kernels
+        W12, W21, W22, delays = self.build_kernels()
+
+        # Compute delays by dividing distances by axonal velocity
+        delays12 = np.floor(delays/self.axonalVelGS)
+        delays21 = np.floor(delays/self.axonalVelSG)
+        delays22 = np.floor(delays/self.axonalVelGG)
+        maxDelay = int(max(delays12[0].max(), delays21[0].max(),
+                           delays22[0].max()))
+
+        # Set the initial conditions and the history
+        self.initial_conditions(simTime)
+
+        # Initialize the cortical and striatal inputs
+        Cx = (0.027 * self.Wcx) + np.random.normal(0, 0.05, (simTime, m))
+        Str = (0.009 * self.Wstr) + np.random.normal(0, 0.05, (simTime, m))
+
+        # Presynaptic activities
+        pre12, pre21, pre22 = np.empty((m,)), np.empty((m,)), np.empty((m,))
+
+        # DBS signals
+        # A is a gaussian that defines spatialy the stimulation zone
+        x = np.linspace(self.x_inf, self.x_sup, n)
+        tmp = self.g(x-0.5, .09)
+        A = np.zeros((m, ))
+        A = tmp[3*n//8:5*n//8]
+
+        # Xref is the reference signal
+        Xref = np.ones((m, )) * 0.1
+
+        # Simulation
+        U, U_ = np.zeros((m, )), np.zeros((simTime, m))
+        t0 = tm.time()
+        for i in range(maxDelay, simTime):
+            if i*dt > 500:
+                U_[i] = self.Kc * (self.X1[i-1, :m] - Xref).sum() * self.dx
+                U = self.switch * A * U_[i]
+
+            # Take into account the history of rate for each neuron according
+            # to its axonal delay
+            for idx, ii in enumerate(range(m)):
+                mysum = 0.0
+                for jj in range(k, n):
+                    mysum += (W12[ii, jj] *
+                              self.X2[i-delays12[ii, jj], jj])*self.dx
+                pre12[idx] = mysum
+
+            for idx, ii in enumerate(range(k, n)):
+                mysum = 0.0
+                for jj in range(m):
+                    mysum += (W21[ii, jj] *
+                              self.X1[i-delays21[ii, jj], jj])*self.dx
+                pre21[idx] = mysum
+
+            for idx, ii in enumerate(range(k, n)):
+                mysum = 0.0
+                for jj in range(k, n):
+                    mysum += (W22[ii, jj] *
+                              self.X2[i-delays22[ii, jj], jj])*self.dx
+                pre22[idx] = mysum
+
+            # Forward Euler step
+            self.X1[i, :m] = (self.X1[i-1, :m] + (-self.X1[i-1, :m] +
+                              self.S1(-pre12 + Cx[i-1] - U)) * dt/self.tau1)
+            self.X2[i, k:] = (self.X2[i-1, k:] + (-self.X2[i-1, k:] +
+                              self.S2(pre21 - pre22 - Str[i-1]))*dt/self.tau2)
+        t1 = tm.time()
+        print "Simulation time: {} sec".format(t1-t0)
+        return U_
+
+
+if __name__ == '__main__':
+    if len(sys.argv) == 3:
+        config = ConfigParser.RawConfigParser()
+        config.read(sys.argv[1])
+
+        tf = config.getfloat('Time', 'tf')
+        dt = config.getfloat('Time', 'dt')
+
+        sim = dnf(sys.argv[1])
+        res = sim.run(tf, dt)
+
+        np.save("../data/"+sys.argv[2]+'control', res)
+        np.save("../data/"+sys.argv[2]+"solution1", sim.X1)
+        np.save("../data/"+sys.argv[2]+"solution2", sim.X2)
+
+    else:
+        print "Parameters file {} does not exist!".format(sys.argv[1])
