@@ -16,6 +16,8 @@ class dnf:
         config.read(configFileName)
 
         self.n = config.getint('Model', 'numNeurons')
+        self.m, self.k = self.n//6, 5*self.n//6
+
         self.x_inf = config.getfloat('Model', 'x_inf')
         self.x_sup = config.getfloat('Model', 'x_sup')
         self.tau1 = config.getfloat('Model', 'tau1')
@@ -72,6 +74,14 @@ class dnf:
         # return 1.0/(1.0 + np.exp(-x)) - 0.5
         return 0.4/(1 + np.exp(-4.*x/0.4) * 325./75.)
 
+    def G1(self, x):
+        """ Centered at zero, sigmoid function """
+        return self.S1(x) - self.S1(0)
+
+    def G2(self, x):
+        """ Centered at zero, sigmoid function """
+        return self.S2(x) - self.S2(0)
+
     def gaussian(self, x, sigma=1.0):
         ''' Gaussian function '''
         return (1.0/(np.sqrt(2*np.pi)*sigma))*np.exp(-.5*(x/sigma)**2)
@@ -110,41 +120,36 @@ class dnf:
             for i in range(n):
                 # g[j, i] = self.K[j] * self.gaussian(dist[i], self.S[j])
                 g[j, i] = self.K[j] * self.g(dist[i], self.S[j])
-            g[j, n//4:3*n//4] = 0.0
+            g[j, self.m:self.k] = 0.0
 
         # GPe to STN connections
         W12 = np.zeros((n, n))
-        W12[:n//4, 3*n//4:] = g[0, 3*n//4:, 3*n//4:]
+        W12[:self.m, self.k:] = g[0, self.k:, self.k:]
 
         # STN to GPe connections
         W21 = np.zeros((n, n))
-        W21[3*n//4:, :n//4] = g[1, :n//4, :n//4l]
+        W21[self.k:, :self.m] = g[1, :self.m, :self.m]
 
         # GPe to GPe connections
         W22 = np.zeros((n, n))
-        W22[3*n//4:, 3*n//4:] = g[2, 3*n//4:, 3*n//4:]
+        W22[self.k:, self.k:] = g[2, self.k:, self.k:]
         np.fill_diagonal(W22, 0.0)
 
         return W12, W21, W22, dist
-
-    def optogenetics_failure(self, x, percent):
-        idx = np.random.randint(0, x.shape[0], (percent,))
-        x[idx] = 0.0
 
     def initial_conditions(self, time):
         """ Set the initial conditions """
         n = self.n
 
         self.X1 = np.random.uniform(0.01, 0.01, (time, n))
-        self.X1[:, n//4:] = 0.0
+        self.X1[:, self.m:] = 0.0
 
         self.X2 = np.random.uniform(0.01, 0.01, (time, n))
-        self.X2[:, :3*n//4] = 0.0
+        self.X2[:, :self.k] = 0.0
 
     def run(self, tf, dt):
         """ Run a simulation """
-        n = self.n
-        m, k = n//4, 3*n//4
+        n, m, k = self.n, self.m, self.k
 
         # Total simulation time
         simTime = int(tf/dt)
@@ -174,7 +179,7 @@ class dnf:
         x = np.linspace(self.x_inf, self.x_sup, n)
         tmp = self.g(x-0.5, .09)
         A = np.zeros((m, ))
-        A = tmp[3*n//8:5*n//8]
+        A = tmp[(n-10)//2:(n+10)//2]
 
         # Xref is the reference signal
         Xref = np.ones((m, )) * 0.1
@@ -184,7 +189,7 @@ class dnf:
         t0 = tm.time()
         for i in range(maxDelay, simTime):
             if i*dt > 500:
-                U_[i] = self.Kc * (self.X1[i-self.tau, :m] - Xref)
+                U_[i] = self.Kc * (self.X1[i-1, :m] - Xref).sum() * self.dx
                 U = self.switch * A * U_[i]
 
             # Take into account the history of rate for each neuron according
@@ -212,7 +217,7 @@ class dnf:
 
             # Forward Euler step
             self.X1[i, :m] = (self.X1[i-1, :m] + (-self.X1[i-1, :m] +
-                              self.S1(-pre12 + Cx[i-1] - U))*dt/self.tau1)
+                              self.S1(-pre12 + Cx[i-1] - U)) * dt/self.tau1)
             self.X2[i, k:] = (self.X2[i-1, k:] + (-self.X2[i-1, k:] +
                               self.S2(pre21 - pre22 - Str[i-1]))*dt/self.tau2)
         t1 = tm.time()
@@ -231,9 +236,9 @@ if __name__ == '__main__':
         sim = dnf(sys.argv[1])
         res = sim.run(tf, dt)
 
-        np.save("../data/"+sys.argv[2]+'control', res)
-        np.save("../data/"+sys.argv[2]+"solution1", sim.X1)
-        np.save("../data/"+sys.argv[2]+"solution2", sim.X2)
+        np.save(sys.argv[2]+'control', res)
+        np.save(sys.argv[2]+"solution1", sim.X1)
+        np.save(sys.argv[2]+"solution2", sim.X2)
 
     else:
         print "Parameters file {} does not exist!".format(sys.argv[1])

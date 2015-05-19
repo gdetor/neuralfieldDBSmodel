@@ -60,6 +60,7 @@ class dnf:
         self.x_sup = config.getfloat('Model', 'x_sup')
         self.tau1 = config.getfloat('Model', 'tau1')
         self.tau2 = config.getfloat('Model', 'tau2')
+        self.K = getlist(config.get('Model', 'SynapticStrength'))
         self.S = getlist(config.get('Model', 'SynapticVariance'))
 
         self.Wcx = config.getfloat('Model', 'synapticstrengthCx')
@@ -73,7 +74,7 @@ class dnf:
         self.dx = self.l/float(self.n)
         self.mean = self.l/2
 
-        # self.norm()
+        self.norm()
         self.printParams()
 
     def printParams(self):
@@ -82,6 +83,9 @@ class dnf:
         print "Number of neurons: {}".format(self.n)
         print "Domain Omega: [{}, {}]".format(self.x_inf, self.x_sup)
         print "Length of domain: {}".format(self.l)
+        print "Synaptic decay times: {} and {}".format(self.tau1, self.tau2)
+        print "Synaptic stregnths: {}, {}, {}".format(self.K[0], self.K[1],
+                                                      self.K[2])
         print "Synaptic variances: {}, {}, {}".format(self.S[0], self.S[1],
                                                       self.S[2])
         print 'DBS Parameters'
@@ -131,18 +135,18 @@ class dnf:
             norm[i] = tmp.sum() * dx * dx
         print "Norm W22: {}".format(norm[2])
 
-    def build_kernels(self, K):
+    def build_kernels(self):
         """ Build the synaptic connectivity matrices """
         n = self.n
         # Compute all the possible distances
         dist = self.build_distances(n)
 
         # Create a temporary vector containing gaussians
-        g = np.empty((len(K), n, n))
-        for j in range(len(K)):
+        g = np.empty((len(self.K), n, n))
+        for j in range(len(self.K)):
             for i in range(n):
                 # g[j, i] = self.K[j] * self.gaussian(dist[i], self.S[j])
-                g[j, i] = K[j] * self.g(dist[i], self.S[j])
+                g[j, i] = self.K[j] * self.g(dist[i], self.S[j])
             g[j, self.m:self.k] = 0.0
 
         # GPe to STN connections
@@ -166,7 +170,8 @@ class dnf:
         self.X1 = np.zeros((time, n))
         self.X2 = np.zeros((time, n))
 
-    def run(self, tf, dt, K, c1, c2):
+    def run(self, tf, dt, c1, c2):
+        np.random.seed(62)
         """ Run a simulation """
         n, m, k = self.n, self.m, self.k
 
@@ -174,7 +179,7 @@ class dnf:
         simTime = int(tf/dt)
 
         # Returns the three synaptic connections kernels
-        W12, W21, W22, delays = self.build_kernels(K)
+        W12, W21, W22, delays = self.build_kernels()
 
         # Compute delays by dividing distances by axonal velocity
         delays12 = np.floor(delays/c2)
@@ -244,28 +249,15 @@ if __name__ == '__main__':
 
         sim = dnf(sys.argv[1])
 
-        n = 5
-        perc = 35.0/100.0
-        var1, var2 = perc*0.09, perc*6.0
-        var3, var4 = perc*38.0, perc*30.0
-        var5 = perc*0.166
-        c1 = np.linspace(0.166 - var5, 0.166 + var5, n)
-        c2 = np.linspace(0.09 - var1, 0.09 + var1, n)
-        w22 = np.linspace(6.0 - var2, 6.0 + var2, n)
-        w21 = np.linspace(38.0 - var3, 38.0 + var3, n)
-        w12 = np.linspace(30.0 - var4, 30.0 + var4, n)
+        n = 100
+        c1 = np.linspace(0.01, 0.95, n)
+        c2 = np.linspace(0.01, 0.95, n)
 
-        ampl = np.empty((n*n*n*n*n, ))
-        idx = 0
-        for i in range(n):
-            for j in range(n):
-                for k in range(n):
-                    for l in range(n):
-                        for m in range(n):
-                            K = [w12[k], w21[l], w22[m]]
-                            ampl[idx] = (sim.run(tf, dt, K, c1[i], c2[j]))
-                            idx += 1
-        np.save('bruteforcepms', ampl)
+        ampl = np.empty((n, n))
+        for i, j in enumerate(c1):
+            for k, l in enumerate(c2):
+                ampl[i, k] = (sim.run(tf, dt, j, l))
+        np.save('velocity', ampl)
 
     else:
         print "Parameters file {} does not exist!".format(sys.argv[1])

@@ -16,6 +16,8 @@ class dnf:
         config.read(configFileName)
 
         self.n = config.getint('Model', 'numNeurons')
+        self.m, self.k = self.n//6, 5*self.n//6
+
         self.x_inf = config.getfloat('Model', 'x_inf')
         self.x_sup = config.getfloat('Model', 'x_sup')
         self.tau1 = config.getfloat('Model', 'tau1')
@@ -70,6 +72,14 @@ class dnf:
         # return 1.0/(1.0 + np.exp(-x)) - 0.5
         return 0.4/(1 + np.exp(-4.*x/0.4) * 325./75.)
 
+    def G1(self, x):
+        """ Centered at zero, sigmoid function """
+        return self.S1(x) - self.S1(0)
+
+    def G2(self, x):
+        """ Centered at zero, sigmoid function """
+        return self.S2(x) - self.S2(0)
+
     def gaussian(self, x, sigma=1.0):
         ''' Gaussian function '''
         return (1.0/(np.sqrt(2*np.pi)*sigma))*np.exp(-.5*(x/sigma)**2)
@@ -93,7 +103,7 @@ class dnf:
         norm = np.zeros((len(self.K), ))
 
         mask = np.zeros((N, N))
-        mask[3*N//4:, 3*N//4:] = 1.0
+        mask[self.k:, self.k:] = 1.0
         np.fill_diagonal(mask, 0.0)
 
         for i in range(len(self.K)):
@@ -113,45 +123,39 @@ class dnf:
             for i in range(n):
                 # g[j, i] = self.K[j] * self.gaussian(dist[i], self.S[j])
                 g[j, i] = self.K[j] * self.g(dist[i], self.S[j])
-            g[j, n//4:3*n//4] = 0.0
+            g[j, self.m:self.k] = 0.0
 
         # GPe to STN connections
         W12 = np.zeros((n, n))
-        W12[:n//4, 3*n//4:] = g[0, 3*n//4:, 3*n//4:]
+        W12[:self.m, self.k:] = g[0, self.k:, self.k:]
 
         # STN to GPe connections
         W21 = np.zeros((n, n))
-        W21[3*n//4:, :n//4] = g[1, :n//4, :n//4l]
+        W21[self.k:, :self.m] = g[1, :self.m, :self.m]
 
         # GPe to GPe connections
         W22 = np.zeros((n, n))
-        W22[3*n//4:, 3*n//4:] = g[2, 3*n//4:, 3*n//4:]
+        W22[self.k:, self.k:] = g[2, self.k:, self.k:]
         np.fill_diagonal(W22, 0.0)
 
         return W12, W21, W22, dist
 
     def optogenetics_failure(self, x, percent):
-        print x.shape[0], percent
-        idx = np.random.randint(0, x.shape[0], (percent,))
+        idx = np.random.choice(np.arange(0, x.shape[0], 1), percent,
+                               replace=False)
         x[idx] = 0.0
-        print x[idx]
         return sum(1 for i in x.flatten() if i == 0)
 
     def initial_conditions(self, time):
         """ Set the initial conditions """
         n = self.n
-
-        self.X1 = np.random.uniform(0.0, 0.1, (time, n))
-        self.X1[:, n//4:] = 0.0
-
-        self.X2 = np.random.uniform(0.0, 0.1, (time, n))
-        self.X2[:, :3*n//4] = 0.0
+        self.X1 = np.zeros((time, n))
+        self.X2 = np.zeros((time, n))
 
     def run(self, tf, dt, percentage):
         np.random.seed(62)
         """ Run a simulation """
-        n = self.n
-        m, k = n//4, 3*n//4
+        n, m, k = self.n, self.m, self.k
 
         # Total simulation time
         simTime = int(tf/dt)
@@ -170,8 +174,8 @@ class dnf:
         self.initial_conditions(simTime)
 
         # Initialize the cortical and striatal inputs
-        Cx = (0.027 * self.Wcx) + np.random.normal(0, 0.05, (simTime, m))
-        Str = (0.009 * self.Wstr) + np.random.normal(0, 0.05, (simTime, m))
+        Cx = 0.026 * self.Wcx
+        Str = 0.008 * self.Wstr
 
         # Presynaptic activities
         pre12, pre21, pre22 = np.empty((m,)), np.empty((m,)), np.empty((m,))
@@ -181,7 +185,7 @@ class dnf:
         x = np.linspace(self.x_inf, self.x_sup, n)
         tmp = self.g(x-0.5, .09)
         A = np.zeros((m, ))
-        A = tmp[3*n//8:5*n//8]
+        A = tmp[(n-10)//2:(n+10)//2]
 
         zeros = self.optogenetics_failure(A, percentage)
 
@@ -202,28 +206,28 @@ class dnf:
                 mysum = 0.0
                 for jj in range(k, n):
                     mysum += (W12[ii, jj] *
-                              self.X2[i-delays[ii, jj], jj])*self.dx
+                              self.X2[i-delays12[ii, jj], jj])*self.dx
                 pre12[idxi] = mysum
 
             for idxi, ii in enumerate(range(k, n)):
                 mysum = 0.0
                 for jj in range(0, m):
                     mysum += (W21[ii, jj] *
-                              self.X1[i-delays[ii, jj], jj])*self.dx
+                              self.X1[i-delays21[ii, jj], jj])*self.dx
                 pre21[idxi] = mysum
 
             for idxi, ii in enumerate(range(k, n)):
                 mysum = 0.0
                 for jj in range(k, n):
                     mysum += (W22[ii, jj] *
-                              self.X2[i-delays[ii, jj], jj])*self.dx
+                              self.X2[i-delays22[ii, jj], jj])*self.dx
                 pre22[idxi] = mysum
 
             # Forward Euler step
             self.X1[i, :m] = (self.X1[i-1, :m] + (-self.X1[i-1, :m] +
-                              self.S1(-pre12 + Cx[i-1] - U)) * dt/self.tau1)
+                              self.S1(-pre12 + Cx - U)) * dt/self.tau1)
             self.X2[i, k:] = (self.X2[i-1, k:] + (-self.X2[i-1, k:] +
-                              self.S2(pre21 - pre22 - Str[i-1]))*dt/self.tau2)
+                              self.S2(pre21 - pre22 - Str))*dt/self.tau2)
         t1 = tm.time()
         print "Simulation time: {} sec".format(t1-t0)
         return U_, zeros
@@ -239,10 +243,10 @@ if __name__ == '__main__':
 
         sim = dnf(sys.argv[1])
 
-        for i in range(0, 10, 2):
+        damagePercent = [0, 3, 5, 7, 10]
+        for i in damagePercent:
             _, zeros = sim.run(tf, dt, i)
-            np.save("../tools/"+sys.argv[2]+"solution1"+str(i)+"6", sim.X1)
-            print i, zeros
+            np.save(sys.argv[2]+"solution"+str(i)+'_'+"12", sim.X1)
 
     else:
         print "Parameters file {} does not exist!".format(sys.argv[1])

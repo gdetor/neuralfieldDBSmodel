@@ -31,7 +31,8 @@ Caveats
 --------
 > You have to make sure that all the paths found within scripts are compatible
   with your own system. The source code was mainly built on Linux (Debian)
-  platform. 
+  platform. If you would like to run specific experiments you have to properly
+  modify the source code.
 
 
 License

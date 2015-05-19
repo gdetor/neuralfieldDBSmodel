@@ -1,45 +1,7 @@
-from __future__ import division
 import sys
+import time as tm
 import numpy as np
 import ConfigParser
-from numpy.fft import rfft
-from numpy import polyfit, arange
-from scipy.signal import blackmanharris, detrend
-
-
-def parabolic(f, x):
-    """Quadratic interpolation for estimating the true position of an
-    inter-sample maximum when nearby samples are known.
-    f is a vector and x is an index for that vector.
-
-    Returns (vx, vy), the coordinates of the vertex of a parabola that goes
-    through point x and its two neighbors.
-
-    Example:
-    Defining a vector f with a local maximum at index 3 (= 6), find local
-    maximum if points 2, 3, and 4 actually defined a parabola.
-
-    In [3]: f = [2, 3, 1, 6, 4, 2, 3, 1]
-
-    In [4]: parabolic(f, argmax(f))
-    Out[4]: (3.2142857142857144, 6.1607142857142856)
-
-    """
-    xv = 1/2. * (f[x-1] - f[x+1]) / (f[x-1] - 2 * f[x] + f[x+1]) + x
-    yv = f[x] - 1/4. * (f[x-1] - f[x+1]) * (xv - x)
-    return (xv, yv)
-
-
-def parabolic_polyfit(f, x, n):
-    """Use the built-in polyfit() function to find the peak of a parabola
-    f is a vector and x is an index for that vector.
-
-    n is the number of samples of the curve used to fit the parabola.
-    """
-    a, b, c = polyfit(arange(x-n//2, x+n//2+1), f[x-n//2:x+n//2+1], 2)
-    xv = -0.5 * b/a
-    yv = a * xv**2 + b * xv + c
-    return (xv, yv)
 
 
 def getlist(option, sep=',', chars=None):
@@ -60,6 +22,10 @@ class dnf:
         self.x_sup = config.getfloat('Model', 'x_sup')
         self.tau1 = config.getfloat('Model', 'tau1')
         self.tau2 = config.getfloat('Model', 'tau2')
+        self.axonalVelGS = config.getfloat('Model', 'axonalvelocityGS')
+        self.axonalVelSG = config.getfloat('Model', 'axonalvelocitySG')
+        self.axonalVelGG = config.getfloat('Model', 'axonalvelocityGG')
+        self.K = getlist(config.get('Model', 'SynapticStrength'))
         self.S = getlist(config.get('Model', 'SynapticVariance'))
 
         self.Wcx = config.getfloat('Model', 'synapticstrengthCx')
@@ -73,7 +39,7 @@ class dnf:
         self.dx = self.l/float(self.n)
         self.mean = self.l/2
 
-        # self.norm()
+        self.norm()
         self.printParams()
 
     def printParams(self):
@@ -82,8 +48,16 @@ class dnf:
         print "Number of neurons: {}".format(self.n)
         print "Domain Omega: [{}, {}]".format(self.x_inf, self.x_sup)
         print "Length of domain: {}".format(self.l)
+        print "Synaptic decay times: {} and {}".format(self.tau1, self.tau2)
+        print "Axonal transmission velocity G->S: {}".format(self.axonalVelGS)
+        print "Axonal transmission velocity S->G: {}".format(self.axonalVelSG)
+        print "Axonal transmission velocity G->G: {}".format(self.axonalVelGG)
+        print "Synaptic stregnths: {}, {}, {}".format(self.K[0], self.K[1],
+                                                      self.K[2])
         print "Synaptic variances: {}, {}, {}".format(self.S[0], self.S[1],
                                                       self.S[2])
+        print "Cortical synaptic strength: {}".format(self.Wcx)
+        print "Striatal synaptic strength: {}".format(self.Wstr)
         print 'DBS Parameters'
         print '--------------'
         print "DBS Gain (Kc): {}".format(self.Kc)
@@ -99,6 +73,14 @@ class dnf:
         """ Sigmoid function of population #2 """
         # return 1.0/(1.0 + np.exp(-x)) - 0.5
         return 0.4/(1 + np.exp(-4.*x/0.4) * 325./75.)
+
+    def G1(self, x):
+        """ Centered at zero, sigmoid function """
+        return self.S1(x) - self.S1(0)
+
+    def G2(self, x):
+        """ Centered at zero, sigmoid function """
+        return self.S2(x) - self.S2(0)
 
     def gaussian(self, x, sigma=1.0):
         ''' Gaussian function '''
@@ -121,28 +103,23 @@ class dnf:
         dx = self.l/float(N)
         d = self.build_distances(N)
         norm = np.zeros((len(self.K), ))
-
-        mask = np.zeros((N, N))
-        mask[self.k:, self.k:] = 1.0
-        np.fill_diagonal(mask, 0.0)
-
         for i in range(len(self.K)):
-            tmp = (self.K[i] * self.g(d, self.S[i]) * mask)**2
+            tmp = (self.K[i] * self.g(d, self.S[i]))**2
             norm[i] = tmp.sum() * dx * dx
         print "Norm W22: {}".format(norm[2])
 
-    def build_kernels(self, K):
+    def build_kernels(self):
         """ Build the synaptic connectivity matrices """
         n = self.n
         # Compute all the possible distances
         dist = self.build_distances(n)
 
         # Create a temporary vector containing gaussians
-        g = np.empty((len(K), n, n))
-        for j in range(len(K)):
+        g = np.empty((len(self.K), n, n))
+        for j in range(len(self.K)):
             for i in range(n):
                 # g[j, i] = self.K[j] * self.gaussian(dist[i], self.S[j])
-                g[j, i] = K[j] * self.g(dist[i], self.S[j])
+                g[j, i] = self.K[j] * self.g(dist[i], self.S[j])
             g[j, self.m:self.k] = 0.0
 
         # GPe to STN connections
@@ -163,10 +140,14 @@ class dnf:
     def initial_conditions(self, time):
         """ Set the initial conditions """
         n = self.n
-        self.X1 = np.zeros((time, n))
-        self.X2 = np.zeros((time, n))
 
-    def run(self, tf, dt, K, c1, c2):
+        self.X1 = np.random.uniform(0.01, 0.01, (time, n))
+        self.X1[:, self.m:] = 0.0
+
+        self.X2 = np.random.uniform(0.01, 0.01, (time, n))
+        self.X2[:, :self.k] = 0.0
+
+    def run(self, tf, dt):
         """ Run a simulation """
         n, m, k = self.n, self.m, self.k
 
@@ -174,12 +155,12 @@ class dnf:
         simTime = int(tf/dt)
 
         # Returns the three synaptic connections kernels
-        W12, W21, W22, delays = self.build_kernels(K)
+        W12, W21, W22, delays = self.build_kernels()
 
         # Compute delays by dividing distances by axonal velocity
-        delays12 = np.floor(delays/c2)
-        delays21 = np.floor(delays/c1)
-        delays22 = np.floor(delays/c2)
+        delays12 = np.floor(delays/self.axonalVelGS)
+        delays21 = np.floor(delays/self.axonalVelSG)
+        delays22 = np.floor(delays/self.axonalVelGG)
         maxDelay = int(max(delays12[0].max(), delays21[0].max(),
                            delays22[0].max()))
 
@@ -187,51 +168,61 @@ class dnf:
         self.initial_conditions(simTime)
 
         # Initialize the cortical and striatal inputs
-        Cx = 0.5
-        Str = 0.4
+        Cx = (0.027 * self.Wcx) + np.random.normal(0, 0.05, (simTime, m))
+        Str = (0.009 * self.Wstr) + np.random.normal(0, 0.05, (simTime, m))
 
         # Presynaptic activities
         pre12, pre21, pre22 = np.empty((m,)), np.empty((m,)), np.empty((m,))
 
+        # DBS signals
+        # A is a gaussian that defines spatialy the stimulation zone
+        x = np.linspace(self.x_inf, self.x_sup, n)
+        tmp = self.g(x-0.5, .09)
+        A = np.zeros((m, ))
+        A = tmp[(n-10)//2:(n+10)//2]
+
+        # Xref is the reference signal
+        Xref = np.ones((m, )) * 0.1
+
         # Simulation
+        U, U_ = np.zeros((m, )), np.zeros((simTime, m))
+        t0 = tm.time()
         for i in range(maxDelay, simTime):
+            if i*dt > 500:
+                U_[i] = self.Kc * (self.X1[i-self.tau, :m] - Xref)
+                U = self.switch * A * U_[i]
+
             # Take into account the history of rate for each neuron according
             # to its axonal delay
-            for idxi, ii in enumerate(range(m)):
+            for idx, ii in enumerate(range(m)):
                 mysum = 0.0
                 for jj in range(k, n):
                     mysum += (W12[ii, jj] *
                               self.X2[i-delays12[ii, jj], jj])*self.dx
-                pre12[idxi] = mysum
+                pre12[idx] = mysum
 
-            for idxi, ii in enumerate(range(k, n)):
+            for idx, ii in enumerate(range(k, n)):
                 mysum = 0.0
-                for jj in range(0, m):
+                for jj in range(m):
                     mysum += (W21[ii, jj] *
                               self.X1[i-delays21[ii, jj], jj])*self.dx
-                pre21[idxi] = mysum
+                pre21[idx] = mysum
 
-            for idxi, ii in enumerate(range(k, n)):
+            for idx, ii in enumerate(range(k, n)):
                 mysum = 0.0
                 for jj in range(k, n):
                     mysum += (W22[ii, jj] *
                               self.X2[i-delays22[ii, jj], jj])*self.dx
-                pre22[idxi] = mysum
+                pre22[idx] = mysum
 
             # Forward Euler step
             self.X1[i, :m] = (self.X1[i-1, :m] + (-self.X1[i-1, :m] +
-                              self.S1(-pre12 + Cx)) * dt/self.tau1)
+                              self.S1(-pre12 + Cx[i-1] - U))*dt/self.tau1)
             self.X2[i, k:] = (self.X2[i-1, k:] + (-self.X2[i-1, k:] +
-                              self.S2(pre21 - pre22 - Str))*dt/self.tau2)
-        dx = 1.0/float(m)
-        fr = self.X1.sum(axis=1) * dx / 1.0
-
-        signal = detrend(fr)
-        windowed = signal * blackmanharris(len(signal))
-        f = rfft(windowed)
-        i = np.argmax(np.abs(f))
-        # true_i = parabolic(np.log(np.abs(f)), i)[0]
-        return i
+                              self.S2(pre21 - pre22 - Str[i-1]))*dt/self.tau2)
+        t1 = tm.time()
+        print "Simulation time: {} sec".format(t1-t0)
+        return U_
 
 
 if __name__ == '__main__':
@@ -243,29 +234,11 @@ if __name__ == '__main__':
         dt = config.getfloat('Time', 'dt')
 
         sim = dnf(sys.argv[1])
+        res = sim.run(tf, dt)
 
-        n = 5
-        perc = 35.0/100.0
-        var1, var2 = perc*0.09, perc*6.0
-        var3, var4 = perc*38.0, perc*30.0
-        var5 = perc*0.166
-        c1 = np.linspace(0.166 - var5, 0.166 + var5, n)
-        c2 = np.linspace(0.09 - var1, 0.09 + var1, n)
-        w22 = np.linspace(6.0 - var2, 6.0 + var2, n)
-        w21 = np.linspace(38.0 - var3, 38.0 + var3, n)
-        w12 = np.linspace(30.0 - var4, 30.0 + var4, n)
-
-        ampl = np.empty((n*n*n*n*n, ))
-        idx = 0
-        for i in range(n):
-            for j in range(n):
-                for k in range(n):
-                    for l in range(n):
-                        for m in range(n):
-                            K = [w12[k], w21[l], w22[m]]
-                            ampl[idx] = (sim.run(tf, dt, K, c1[i], c2[j]))
-                            idx += 1
-        np.save('bruteforcepms', ampl)
+        np.save(sys.argv[2]+'control', res)
+        np.save(sys.argv[2]+"solution1", sim.X1)
+        np.save(sys.argv[2]+"solution2", sim.X2)
 
     else:
         print "Parameters file {} does not exist!".format(sys.argv[1])
