@@ -92,12 +92,10 @@ class dnf:
 
     def S1(self, x):
         """ Sigmoid function of population #1 """
-        # return 1.0/(1.0 + np.exp(-x)) - 0.5
         return 0.3/(1 + np.exp(-4.*x/0.3) * 283./17.)
 
     def S2(self, x):
         """ Sigmoid function of population #2 """
-        # return 1.0/(1.0 + np.exp(-x)) - 0.5
         return 0.4/(1 + np.exp(-4.*x/0.4) * 325./75.)
 
     def gaussian(self, x, sigma=1.0):
@@ -108,18 +106,20 @@ class dnf:
     def g(self, x, sigma):
         return np.exp(-.5*(x/sigma)**2)
 
-    def build_distances(self, nodes):
+    def build_distances(self, nodes, mean, x_inf, x_sup):
         """ Computes all the possible distances between units """
-        X, Y = np.meshgrid(np.linspace(self.x_inf, self.x_sup, nodes),
-                           np.linspace(self.x_inf, self.x_sup, nodes))
-        D = abs((X-self.mean) - (Y-self.mean))
+        X, Y = np.meshgrid(np.linspace(x_inf, x_sup, nodes),
+                           np.linspace(x_inf, x_sup, nodes))
+        D = abs((X-mean) - (Y-mean))
         return D
 
     def norm(self):
         """ Computes the norms """
         N = 5000
         dx = self.l/float(N)
-        d = self.build_distances(N)
+        d = [self.build_distances(N, 0.917, 0.0, 1.0),
+             self.build_distances(N, 0.083, 0.0, 1.0),
+             self.build_distances(N, 0.912, 0.83, 1.0)]
         norm = np.zeros((len(self.K), ))
 
         mask = np.zeros((N, N))
@@ -127,7 +127,7 @@ class dnf:
         np.fill_diagonal(mask, 0.0)
 
         for i in range(len(self.K)):
-            tmp = (self.K[i] * self.g(d, self.S[i]) * mask)**2
+            tmp = (self.K[i] * self.g(d[i], self.S[i]) * mask)**2
             norm[i] = tmp.sum() * dx * dx
         print "Norm W22: {}".format(norm[2])
 
@@ -135,14 +135,16 @@ class dnf:
         """ Build the synaptic connectivity matrices """
         n = self.n
         # Compute all the possible distances
-        dist = self.build_distances(n)
+        dist = [self.build_distances(n, 0.917, 0.0, 1.0),
+                self.build_distances(n, 0.083, 0.0, 1.0),
+                self.build_distances(n, 0.912, 0.83, 1.0)]
 
         # Create a temporary vector containing gaussians
         g = np.empty((len(K), n, n))
         for j in range(len(K)):
             for i in range(n):
                 # g[j, i] = self.K[j] * self.gaussian(dist[i], self.S[j])
-                g[j, i] = K[j] * self.g(dist[i], self.S[j])
+                g[j, i] = K[j] * self.g(dist[j][i], self.S[j])
             g[j, self.m:self.k] = 0.0
 
         # GPe to STN connections
@@ -177,9 +179,9 @@ class dnf:
         W12, W21, W22, delays = self.build_kernels(K)
 
         # Compute delays by dividing distances by axonal velocity
-        delays12 = np.floor(delays/c2)
-        delays21 = np.floor(delays/c1)
-        delays22 = np.floor(delays/c2)
+        delays12 = np.floor(delays[0]/c2)
+        delays21 = np.floor(delays[1]/c1)
+        delays22 = np.floor(delays[2]/c2)
         maxDelay = int(max(delays12[0].max(), delays21[0].max(),
                            delays22[0].max()))
 
