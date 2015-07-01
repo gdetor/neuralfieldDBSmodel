@@ -99,17 +99,11 @@ class dnf:
         """ Computes the norms """
         N = 5000
         dx = self.l/float(N)
-        d = [self.build_distances(N, 0.917, 0.0, 1.0),
-             self.build_distances(N, 0.083, 0.0, 1.0),
-             self.build_distances(N, 0.912, 0.83, 1.0)]
+        d = self.build_distances(N, 0.0, 0.0, 1.0)
         norm = np.zeros((len(self.K), ))
 
-        mask = np.zeros((N, N))
-        mask[self.k:, self.k:] = 1.0
-        np.fill_diagonal(mask, 0.0)
-
         for i in range(len(self.K)):
-            tmp = (self.K[i] * self.g(d[i], self.S[i]) * mask)**2
+            tmp = (self.K[i] * self.g(d, self.S[i]))**2
             norm[i] = tmp.sum() * dx * dx
         print "Norm W22: {}".format(norm[2])
 
@@ -181,7 +175,7 @@ class dnf:
 
         # Initialize the cortical and striatal inputs
         Cx = (0.027 * self.Wcx) + np.random.normal(0, 0.05, (simTime, m))
-        Str = (0.009 * self.Wstr) + np.random.normal(0, 0.05, (simTime, m))
+        Str = (0.002 * self.Wstr) + np.random.normal(0, 0.05, (simTime, m))
 
         # Presynaptic activities
         pre12, pre21, pre22 = np.empty((m,)), np.empty((m,)), np.empty((m,))
