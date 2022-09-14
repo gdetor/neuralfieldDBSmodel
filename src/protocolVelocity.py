@@ -1,7 +1,7 @@
 from __future__ import division
 import sys
 import numpy as np
-import ConfigParser
+import configparser
 from numpy.fft import rfft
 from numpy import polyfit, arange
 from scipy.signal import blackmanharris, detrend
@@ -50,7 +50,7 @@ def getlist(option, sep=',', chars=None):
 
 class dnf:
     def __init__(self, configFileName):
-        config = ConfigParser.RawConfigParser()
+        config = configparser.RawConfigParser()
         config.read(configFileName)
 
         self.n = config.getint('Model', 'numNeurons')
@@ -70,29 +70,29 @@ class dnf:
         self.Kc = config.getfloat('DBS', 'Kc')
         self.tau = config.getint('DBS', 'tau')
 
-        self.l = (self.x_sup - self.x_inf)
-        self.dx = self.l/float(self.n)
-        self.mean = self.l/2
+        self.len = (self.x_sup - self.x_inf)
+        self.dx = self.len/float(self.n)
+        self.mean = self.len/2
 
         self.norm()
         self.printParams()
 
     def printParams(self):
-        print 'Model Parameters'
-        print '----------------'
-        print "Number of neurons: {}".format(self.n)
-        print "Domain Omega: [{}, {}]".format(self.x_inf, self.x_sup)
-        print "Length of domain: {}".format(self.l)
-        print "Synaptic decay times: {} and {}".format(self.tau1, self.tau2)
-        print "Synaptic stregnths: {}, {}, {}".format(self.K[0], self.K[1],
-                                                      self.K[2])
-        print "Synaptic variances: {}, {}, {}".format(self.S[0], self.S[1],
-                                                      self.S[2])
-        print 'DBS Parameters'
-        print '--------------'
-        print "DBS Gain (Kc): {}".format(self.Kc)
-        print "DBS control signal time constant: {}".format(self.tau)
-        print "-------------------------------------------------------------"
+        print('Model Parameters')
+        print('----------------')
+        print("Number of neurons: {}".format(self.n))
+        print("Domain Omega: [{}, {}]".format(self.x_inf, self.x_sup))
+        print("Length of domain: {}".format(self.len))
+        print("Synaptic decay times: {} and {}".format(self.tau1, self.tau2))
+        print("Synaptic stregnths: {}, {}, {}".format(self.K[0], self.K[1],
+                                                      self.K[2]))
+        print("Synaptic variances: {}, {}, {}".format(self.S[0], self.S[1],
+                                                      self.S[2]))
+        print('DBS Parameters')
+        print('--------------')
+        print("DBS Gain (Kc): {}".format(self.Kc))
+        print("DBS control signal time constant: {}".format(self.tau))
+        print("-------------------------------------------------------------")
 
     def S1(self, x):
         """ Sigmoid function of population #1 """
@@ -122,14 +122,14 @@ class dnf:
     def norm(self):
         """ Computes the norms """
         N = 5000
-        dx = self.l/float(N)
+        dx = self.len/float(N)
         d = self.build_distances(N, 0.0, 0.0, 1.0)
         norm = np.zeros((len(self.K), ))
 
         for i in range(len(self.K)):
             tmp = (self.K[i] * self.g(d, self.S[i]))**2
             norm[i] = tmp.sum() * dx * dx
-        print "Norm W22: {}".format(norm[2])
+        print("Norm W22: {}".format(norm[2]))
 
     def build_kernels(self):
         """ Build the synaptic connectivity matrices """
@@ -180,9 +180,9 @@ class dnf:
         W12, W21, W22, delays = self.build_kernels()
 
         # Compute delays by dividing distances by axonal velocity
-        delays12 = np.floor(delays[0]/c2)
-        delays21 = np.floor(delays[1]/c1)
-        delays22 = np.floor(delays[2]/c2)
+        delays12 = np.floor(delays[0]/c2).astype('i')
+        delays21 = np.floor(delays[1]/c1).astype('i')
+        delays22 = np.floor(delays[2]/c2).astype('i')
         maxDelay = int(max(delays12[0].max(), delays21[0].max(),
                            delays22[0].max()))
 
@@ -239,7 +239,7 @@ class dnf:
 
 if __name__ == '__main__':
     if len(sys.argv) == 3:
-        config = ConfigParser.RawConfigParser()
+        config = configparser.RawConfigParser()
         config.read(sys.argv[1])
 
         tf = config.getfloat('Time', 'tf')
@@ -258,4 +258,4 @@ if __name__ == '__main__':
         np.save('velocity', ampl)
 
     else:
-        print "Parameters file {} does not exist!".format(sys.argv[1])
+        print("Parameters file {} does not exist!".format(sys.argv[1]))

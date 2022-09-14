@@ -56,7 +56,7 @@ def loadData(experiments, filenames):
     data = []
     for j in range(len(experiments)):
         for i in range(len(filenames)):
-            print experiments[j], filenames[i]
+            print(experiments[j], filenames[i])
             data.append(np.load(experiments[j]+filenames[i]))
     return np.array(data)
 
@@ -70,8 +70,8 @@ def plotFiringRate(x1, x2, index):
     fr1 = x1.sum(axis=1) * dx / 1.0
     fr2 = x2.sum(axis=1) * dx / 1.0
 
-    print fr1.max() - np.abs(fr1.min())
-    print fr2.max() - np.abs(fr2.min())
+    print(fr1.max() - np.abs(fr1.min()))
+    print(fr2.max() - np.abs(fr2.min()))
 
     fig = plt.figure(figsize=(8, 8))
     ax = fig.add_subplot(111)
@@ -135,7 +135,7 @@ def plotControlSignal(x, index):
 
 
 if __name__ == '__main__':
-    print 'Plotting results!'
+    print('Plotting results!')
 
     path = '../data/'
     filenames = ['solution1.npy', 'solution2.npy']

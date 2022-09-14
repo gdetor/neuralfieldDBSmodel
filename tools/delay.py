@@ -19,15 +19,15 @@ if __name__ == '__main__':
 
     res1, res2 = np.zeros((3, percent)), np.zeros((3, percent))
     for j, k in enumerate([2, 6, 12]):
-        for l, i in enumerate(damagePercent):
+        for p, i in enumerate(damagePercent):
             x1 = np.load('protocolDelayssolution'+str(k)+'_'+str(i)+'.npy')
             n = x1.shape[1]
             dx = 1.0/float(n//6)
             fr = x1[:, :n//6].sum(axis=1) * dx
 
-            res1[j, l] = fr[T:].max() - fr[T:].min()
-            res2[j, l] = fr[100:400].max() - fr[100:400].min()
-            print res1[j, l] * 1000.0, res2[j, l]*1000.0
+            res1[j, p] = fr[T:].max() - fr[T:].min()
+            res2[j, p] = fr[100:400].max() - fr[100:400].min()
+            print(res1[j, p] * 1000.0, res2[j, p]*1000.0)
 
     n = np.array(damagePercent)
     fig = plt.figure(figsize=(8, 7.5))

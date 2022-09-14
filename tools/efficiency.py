@@ -9,12 +9,13 @@ if __name__ == '__main__':
     res1, res2 = [], []
     for k in range(2, 8, 2):
         for i in range(0, 10, 2):
+            print(k, i)
             x1 = np.load('protocolEfficiencysolution1'+str(i)+str(k)+'.npy')
             n = x1.shape[1]
             dx = 1.0/float(n//4)
             fr = x1.sum(axis=1) * dx / 1.0
 
-            print fr[T:].max(), fr[T:].min()
+            print(fr[T:].max(), fr[T:].min())
 
             res1.append(np.abs(np.abs(fr[T:].max()) - np.abs(fr[T:].min())))
             res2.append(np.abs(np.abs(fr[100:400].max()) -
